@@ -160,7 +160,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # "Can not decode content-encoding: br" — see #12511 / #15744.
     "platform.discord": (
         "discord.py[voice]==2.7.1",
-        "brotlicffi==1.2.0.1",
+        "brotlicffi==1.2.1.0",
         # discord.py pulls aiohttp transitively (>=3.7.4,<4) as its HTTP
         # backbone. Pin the patched floor here too so the lazy Discord path
         # can't keep an already-installed vulnerable aiohttp satisfying that

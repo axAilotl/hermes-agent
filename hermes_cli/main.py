@@ -1621,7 +1621,9 @@ def _ensure_tui_node() -> None:
     Idempotent no-op when node+npm are already discoverable. Set
     ``HERMES_SKIP_NODE_BOOTSTRAP=1`` to disable auto-install.
     """
-    if shutil.which("node") and shutil.which("npm"):
+    from hermes_constants import node_tool_runnable
+
+    if node_tool_runnable(shutil.which("node"), is_node=True) and shutil.which("npm"):
         return
     if os.environ.get("HERMES_SKIP_NODE_BOOTSTRAP"):
         return
@@ -1738,10 +1740,15 @@ def _make_tui_argv(tui_dir: Path, tui_dev: bool) -> tuple[list[str], Path]:
     _ensure_tui_node()
 
     def _node_bin(bin: str) -> str:
+        from hermes_constants import node_tool_runnable
+
         if bin == "node":
             env_node = os.environ.get("HERMES_NODE")
-            if env_node and os.path.isfile(env_node) and os.access(env_node, os.X_OK):
-                return env_node
+            if env_node:
+                if node_tool_runnable(env_node, is_node=True):
+                    return env_node
+                print("HERMES_NODE requires a supported Node.js with the Brotli security fix.")
+                sys.exit(1)
         path = shutil.which(bin)
         if not path and bin == "node":
             try:
@@ -1750,8 +1757,11 @@ def _make_tui_argv(tui_dir: Path, tui_dev: bool) -> tuple[list[str], Path]:
                     path = shutil.which("node")
             except Exception:
                 pass
+        runtime = path if bin == "node" else shutil.which("node")
+        if path and not node_tool_runnable(runtime, is_node=True):
+            path = None
         if not path:
-            print(f"{bin} not found — install Node.js to use the TUI.")
+            print(f"{bin} not found or missing the Node.js Brotli security fix — install patched Node.js to use the TUI.")
             sys.exit(1)
         return path
 

@@ -56,3 +56,56 @@ def test_node_bootstrap_redirects_bundled_npm_global_prefix_to_link_dir() -> Non
     assert "heal_managed_node()" in text
     assert "_nb_managed_tool_broken" in text
     assert "for tool in node npm npx" in text
+
+
+def test_node_installers_require_supported_brotli_security_patches() -> None:
+    """Old patch and prerelease binaries must not bypass installation checks."""
+    import subprocess
+
+    install = INSTALL_SH.read_text()
+    predicate = "node_satisfies_build() {" + install.split("node_satisfies_build() {", 1)[1].split("\n}", 1)[0] + "\n}"
+    versions = {
+        "v20.20.2": False, "v22.23.3": False, "v22.23.4": True,
+        "v22.24.0": True, "v23.11.1": False, "v24.22.0": False,
+        "v24.22.1": True, "v25.9.0": False, "v26.12.0": False,
+        "v26.12.1": True, "v24.22.1-rc.1": False, "garbage": False,
+    }
+    for version, accepted in versions.items():
+        for source, function in [(predicate, "node_satisfies_build"),
+                                  ('source "' + str(NODE_BOOTSTRAP) + '"', "_nb_node_version_secure")]:
+            result = subprocess.run(["bash", "-c", source + '\n' + function + ' "$1"', "test", version], check=False)
+            assert (result.returncode == 0) is accepted, (function, version)
+
+
+def test_standalone_setup_and_nixos_guard_check_the_decoder() -> None:
+    """Execute their actual JavaScript guards without installing any tools."""
+    import subprocess
+
+    scripts = [
+        REPO_ROOT / "optional-skills/creative/hyperframes/scripts/setup.sh",
+        REPO_ROOT / "nix/nixosModules.nix",
+    ]
+    for script in scripts:
+        code = script.read_text().split("node -e '", 1)[1].split("\n", 1)[1]
+        code = code.split("\n        '", 1)[0] if script.suffix == ".nix" else code.split("\n'; then", 1)[0]
+        for version, constant, accepted in [
+            ("22.23.3", -17, False), ("22.23.4", -17, True),
+            ("24.22.0", -17, False), ("24.22.1", -17, True),
+            ("26.12.0", -17, False), ("26.12.1", -17, True),
+            ("24.22.1", None, False), ("24.22.1-rc.1", -17, False),
+        ]:
+            import json
+            runner = "new Function('process', 'require', " + json.dumps(code) + ")({versions:{node: " + json.dumps(version) + "},exit: c=>process.exit(c)},()=>({constants:{BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH:" + json.dumps(constant) + "}}));"
+            result = subprocess.run(["node", "-e", runner], check=False, capture_output=True)
+            assert (result.returncode == 0) is accepted, (script, version, constant, result.stderr)
+
+
+def test_nixos_refresh_retains_supported_installed_node_line() -> None:
+    """APT must upgrade an old 24/26 install on its own channel, not stay old."""
+    import subprocess
+
+    text = (REPO_ROOT / "nix/nixosModules.nix").read_text()
+    selector = 'case "$node_major" in' + text.split('case "$node_major" in', 1)[1].split("esac", 1)[0] + "esac"
+    for major, expected in [("18", "22"), ("22", "22"), ("24", "24"), ("26", "26"), ("", "22")]:
+        result = subprocess.run(["bash", "-c", 'node_major="$1"; ' + selector + '\nprintf %s "$node_major"', "test", major], check=True, capture_output=True, text=True)
+        assert result.stdout == expected

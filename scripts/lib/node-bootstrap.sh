@@ -18,12 +18,12 @@
 #   if [ "$HERMES_NODE_AVAILABLE" = true ]; then ...; fi
 #
 # Env inputs (set before sourcing to override defaults):
-#   HERMES_NODE_MIN_VERSION   (default: 20)   — accepted on PATH
+#   HERMES_NODE_MIN_VERSION   (default: 22)   — accepted on PATH
 #   HERMES_NODE_TARGET_MAJOR  (default: 22)   — installed when we install
 #   HERMES_HOME               (default: $HOME/.hermes)
 # ============================================================================
 
-HERMES_NODE_MIN_VERSION="${HERMES_NODE_MIN_VERSION:-20}"
+HERMES_NODE_MIN_VERSION="${HERMES_NODE_MIN_VERSION:-22}"
 HERMES_NODE_TARGET_MAJOR="${HERMES_NODE_TARGET_MAJOR:-22}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_NODE_AVAILABLE=false
@@ -76,9 +76,25 @@ _nb_node_major() {
     [[ "$v" =~ ^[0-9]+$ ]] && echo "$v" || echo 0
 }
 
+_nb_node_version_secure() {
+    local ver="${1#v}"
+    [[ "$ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+    local major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+    local min_minor min_patch
+    # First fixed releases for CVE-2026-111497; unsupported/odd lines are refused.
+    case "$major" in
+        22) min_minor=23; min_patch=4 ;;
+        24) min_minor=22; min_patch=1 ;;
+        26) min_minor=12; min_patch=1 ;;
+        *) return 1 ;;
+    esac
+    [ "$minor" -gt "$min_minor" ] || { [ "$minor" -eq "$min_minor" ] && [ "$patch" -ge "$min_patch" ]; }
+}
+
 _nb_have_modern_node() {
     command -v node >/dev/null 2>&1 || return 1
-    [ "$(_nb_node_major)" -ge "$HERMES_NODE_MIN_VERSION" ]
+    [ "$(_nb_node_major)" -ge "$HERMES_NODE_MIN_VERSION" ] &&
+        _nb_node_version_secure "$(node --version 2>/dev/null)"
 }
 
 # ---------------------------------------------------------------------------

@@ -22,13 +22,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hermes_constants import agent_browser_runnable
+from hermes_constants import agent_browser_runnable, node_tool_runnable
 from tools.environments.local import hermes_subprocess_env
 
 _IS_WINDOWS = platform.system() == "Windows"
 
 _DEP_CHECKS = {
-    "node": lambda: shutil.which("node") is not None,
+    "node": lambda: node_tool_runnable(shutil.which("node"), is_node=True),
     "browser": lambda: (
         agent_browser_runnable(shutil.which("agent-browser"))
         or _has_system_browser()

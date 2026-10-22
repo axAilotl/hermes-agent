@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # HyperFrames setup for Hermes.
 #
-# Verifies Node >= 22 and FFmpeg, installs the `hyperframes` CLI globally,
+# Verifies security-patched Node 22, 24, or 26 and FFmpeg, installs the `hyperframes` CLI globally,
 # pre-caches `chrome-headless-shell`, and runs `hyperframes doctor`.
 #
 # Pins `hyperframes@>=0.4.2` so the OpenClaw/Chromium-147 fix from
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-MIN_NODE_MAJOR=22
+MIN_NODE_VERSION="22.23.4"
 MIN_HYPERFRAMES_VERSION="0.4.2"
 
 red()    { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -27,15 +27,23 @@ bold "==> HyperFrames setup"
 
 if ! command -v node >/dev/null 2>&1; then
   red "✗ Node.js is not installed."
-  echo "   Install Node.js >= ${MIN_NODE_MAJOR} (nvm, Homebrew, or your package manager) and re-run."
+  echo "   Install Node.js >= ${MIN_NODE_VERSION} (nvm, Homebrew, or your package manager) and re-run."
   exit 1
 fi
 
 node_version="$(node --version | sed 's/^v//')"
-node_major="$(echo "$node_version" | cut -d. -f1)"
-if [ "$node_major" -lt "$MIN_NODE_MAJOR" ]; then
-  red "✗ Node.js ${node_version} is too old. HyperFrames requires Node.js >= ${MIN_NODE_MAJOR}."
-  echo "   Upgrade with 'nvm install ${MIN_NODE_MAJOR} && nvm use ${MIN_NODE_MAJOR}' or your package manager."
+# This skill is copied out of the source tree, so verify the actual decoder
+# rather than relying on the repository's installer helpers.
+if ! node -e '
+  const minimum = {22: [23, 4], 24: [22, 1], 26: [12, 1]};
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(process.versions.node);
+  const [major, minor, patch] = match ? match.slice(1).map(Number) : [];
+  const floor = minimum[major];
+  const patched = floor && (minor > floor[0] || (minor === floor[0] && patch >= floor[1]));
+  process.exit(patched && require("node:zlib").constants.BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH === -17 ? 0 : 1);
+'; then
+  red "✗ Node.js ${node_version} needs the Brotli security fix."
+  echo "   Install Node.js 22.23.4, 24.22.1, or 26.12.1 (or a later patch in those lines)."
   exit 1
 fi
 green "✓ Node.js ${node_version}"

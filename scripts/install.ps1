@@ -917,21 +917,17 @@ function Set-GitBashEnvVar {
     Write-Info "If needed, set HERMES_GIT_BASH_PATH manually to your bash.exe path."
 }
 
-# The desktop build runs Vite ^8, which refuses to start on Node outside
-# `^20.19 || >=22.12` -- older Node lacks node:util.styleText, so `vite build`
-# crashes with a SyntaxError that surfaces only as the opaque "Build desktop
-# app ... exit code 1" install failure. Returns $true when a `node --version`
-# string clears that floor.
+# Accept only supported stable releases containing the Brotli security fix.
 function Test-NodeVersionOk {
     param([string]$Version)
-    try {
-        $v = [version]($Version -replace '^v', '' -replace '-.*$', '')
-    } catch {
-        return $false
+    if ($Version -notmatch '^v?(\d+)\.(\d+)\.(\d+)$') { return $false }
+    $v = [version]($Version -replace '^v', '')
+    switch ($v.Major) {
+        22 { return $v -ge [version]"22.23.4" }
+        24 { return $v -ge [version]"24.22.1" }
+        26 { return $v -ge [version]"26.12.1" }
+        default { return $false }
     }
-    if ($v.Major -eq 20 -and $v.Minor -ge 19) { return $true }
-    if ($v.Major -ge 22 -and ($v.Major -gt 22 -or $v.Minor -ge 12)) { return $true }
-    return $false
 }
 
 function Test-Node {
@@ -945,7 +941,7 @@ function Test-Node {
             $script:HasNode = $true
             return $true
         }
-        Write-Warn "Node.js $version is too old for the desktop build (need ^20.19 or >=22.12)"
+        Write-Warn "Node.js $version is unsupported or missing the Brotli security fix (need22.23.4,24.22.1 or26.12.1+)"
     }
 
     # Prefer a Hermes-managed Node from a previous run over a too-old system one.
@@ -1005,6 +1001,7 @@ function Test-Node {
                 }
 
                 $version = & "$HermesHome\node\node.exe" --version
+                if (-not (Test-NodeVersionOk $version)) { throw "Downloaded Node does not meet the security floor" }
                 Write-Success "Node.js $version installed to $HermesHome\node\ (portable, user-scoped)"
                 $script:HasNode = $true
 
@@ -1051,6 +1048,7 @@ function Test-Node {
             $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
             if (Get-Command node -ErrorAction SilentlyContinue) {
                 $version = node --version
+                if (-not (Test-NodeVersionOk $version)) { throw "Installed Node does not meet the security floor" }
                 Write-Success "Node.js $version installed via winget"
                 $script:HasNode = $true
                 return $true

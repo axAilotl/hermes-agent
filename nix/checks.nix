@@ -228,8 +228,7 @@ json.dump(sorted(leaf_paths(DEFAULT_CONFIG)), sys.stdout, indent=2)
           echo "ok" > $out/result
         '';
 
-        # Verify HERMES_NODE is set in wrapper and points to Node 20+
-        # (string-width uses the /v regex flag which requires Node 20+)
+        # Verify the actual Nix runtime includes the fixed Brotli decoder.
         hermes-node = pkgs.runCommand "hermes-node-version" { } ''
           set -e
           echo "=== Checking HERMES_NODE in wrapper ==="
@@ -241,10 +240,15 @@ json.dump(sorted(leaf_paths(DEFAULT_CONFIG)), sys.stdout, indent=2)
           test -x "$HERMES_NODE" || (echo "FAIL: HERMES_NODE=$HERMES_NODE not executable"; exit 1)
           echo "PASS: HERMES_NODE executable at $HERMES_NODE"
 
-          NODE_MAJOR=$("$HERMES_NODE" --version | sed 's/^v//' | cut -d. -f1)
-          test "$NODE_MAJOR" -ge 20 || \
-            (echo "FAIL: Node v$NODE_MAJOR < 20, TUI needs /v regex flag support"; exit 1)
-          echo "PASS: Node v$NODE_MAJOR >= 20"
+          "$HERMES_NODE" -e '
+            const zlib = require("node:zlib");
+            if (zlib.constants.BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH !== -17)
+              throw new Error("Node runtime is missing the Brotli security fix");
+            const data = Buffer.from("Hermes Brotli runtime check");
+            if (!zlib.brotliDecompressSync(zlib.brotliCompressSync(data)).equals(data))
+              throw new Error("Brotli round trip failed");
+          '
+          echo "PASS: Node decoder has the Brotli security fix"
 
           echo "=== All HERMES_NODE checks passed ==="
           mkdir -p $out
