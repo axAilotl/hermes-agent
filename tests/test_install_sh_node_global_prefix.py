@@ -98,3 +98,14 @@ def test_standalone_setup_and_nixos_guard_check_the_decoder() -> None:
             runner = "new Function('process', 'require', " + json.dumps(code) + ")({versions:{node: " + json.dumps(version) + "},exit: c=>process.exit(c)},()=>({constants:{BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH:" + json.dumps(constant) + "}}));"
             result = subprocess.run(["node", "-e", runner], check=False, capture_output=True)
             assert (result.returncode == 0) is accepted, (script, version, constant, result.stderr)
+
+
+def test_nixos_refresh_retains_supported_installed_node_line() -> None:
+    """APT must upgrade an old 24/26 install on its own channel, not stay old."""
+    import subprocess
+
+    text = (REPO_ROOT / "nix/nixosModules.nix").read_text()
+    selector = 'case "$node_major" in' + text.split('case "$node_major" in', 1)[1].split("esac", 1)[0] + "esac"
+    for major, expected in [("18", "22"), ("22", "22"), ("24", "24"), ("26", "26"), ("", "22")]:
+        result = subprocess.run(["bash", "-c", 'node_major="$1"; ' + selector + '\nprintf %s "$node_major"', "test", major], check=True, capture_output=True, text=True)
+        assert result.stdout == expected
