@@ -292,7 +292,19 @@ _managed_node_heal_attempted = False
 _NODE_BOOTSTRAP_SCRIPT = Path(__file__).resolve().parent / "scripts" / "lib" / "node-bootstrap.sh"
 
 
-def node_tool_runnable(path: str | None) -> bool:
+def _node_version_secure(version: str) -> bool:
+    """Accept stable, supported Node lines with the Brotli security fix."""
+    import re
+
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version.strip())
+    if not match:
+        return False
+    major, minor, patch = map(int, match.groups())
+    minimum = {22: (23, 4), 24: (22, 1), 26: (12, 1)}.get(major)
+    return minimum is not None and (minor, patch) >= minimum
+
+
+def node_tool_runnable(path: str | None, *, is_node: bool = False) -> bool:
     """Return True only when *path* is a Node/npm/npx binary that actually runs.
 
     Hermes-managed Node trees live under ``$HERMES_HOME/node`` (or a profile's
@@ -328,7 +340,11 @@ def node_tool_runnable(path: str | None) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return False
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+    if is_node or candidate.name.lower() in ("node", "node.exe"):
+        return _node_version_secure(result.stdout.decode("utf-8", errors="replace"))
+    return True
 
 
 def hermes_managed_node_tree_present(home: Path | None = None) -> bool:
@@ -398,6 +414,10 @@ def _heal_managed_node_windows() -> bool:
             extracted = next(extract_dir.glob("node-v*"), None)
             if extracted is None or not extracted.is_dir():
                 return False
+            # Validate before replacing a working cache: a stale mirror/download
+            # must not restore a pre-fix runtime during an automatic repair.
+            if not node_tool_runnable(str(extracted / "node.exe")):
+                return False
             target = home / "node"
             if target.exists():
                 shutil.rmtree(target)
@@ -449,19 +469,13 @@ def heal_hermes_managed_node() -> bool:
 
 def find_hermes_node_executable(command: str) -> str | None:
     """Return a Hermes-managed Node/npm executable path, healing broken trees."""
+    is_node = Path(command).name.lower().split(".")[0] == "node"
+    if not is_node and not find_hermes_node_executable("node"):
+        return None
     names = _candidate_node_command_names(command)
-    broken_present = False
-    for directory in iter_hermes_node_dirs():
-        for name in names:
-            candidate = directory / name
-            if candidate.is_file() and (
-                sys.platform == "win32" or os.access(candidate, os.X_OK)
-            ):
-                resolved = str(candidate)
-                if node_tool_runnable(resolved):
-                    return resolved
-                broken_present = True
-    if broken_present and heal_hermes_managed_node():
+
+    def scan() -> str | None:
+        first = None
         for directory in iter_hermes_node_dirs():
             for name in names:
                 candidate = directory / name
@@ -469,8 +483,20 @@ def find_hermes_node_executable(command: str) -> str | None:
                     sys.platform == "win32" or os.access(candidate, os.X_OK)
                 ):
                     resolved = str(candidate)
-                    if node_tool_runnable(resolved):
-                        return resolved
+                    if not node_tool_runnable(resolved, is_node=is_node):
+                        if is_node:
+                            # Both directories enter subprocess PATH. Do not
+                            # let npm select an old sibling of a fixed Node.
+                            return None
+                        continue
+                    first = first or resolved
+        return first
+
+    resolved = scan()
+    if resolved:
+        return resolved
+    if hermes_managed_node_tree_present() and heal_hermes_managed_node():
+        return scan()
     return None
 
 
@@ -482,15 +508,25 @@ def find_node_executable_on_path(command: str) -> str | None:
     directly, so prefer the launchable variants explicitly for Hermes-owned
     subprocesses.
     """
-    if sys.platform != "win32":
-        return shutil.which(command)
-
     command_str = str(command)
+    base = Path(command_str).name.lower().split(".")[0]
+    if base in ("npm", "npx") and not find_node_executable_on_path("node"):
+        return None
+    if sys.platform != "win32":
+        candidate = shutil.which(command)
+        if base == "node" and not node_tool_runnable(candidate, is_node=True):
+            return None
+        return candidate
+
     has_path_separator = any(
         sep and sep in command_str for sep in (os.sep, os.altsep, "/", "\\")
     )
     if has_path_separator:
-        return command_str if Path(command_str).is_file() else None
+        if Path(command_str).is_file() and (
+            base != "node" or node_tool_runnable(command_str, is_node=True)
+        ):
+            return command_str
+        return None
 
     for name in _candidate_node_command_names(command_str):
         for directory in os.environ.get("PATH", "").split(os.pathsep):
@@ -498,6 +534,8 @@ def find_node_executable_on_path(command: str) -> str | None:
                 continue
             candidate = Path(directory) / name
             if candidate.is_file():
+                if base == "node" and not node_tool_runnable(str(candidate), is_node=True):
+                    return None
                 return str(candidate)
     return None
 

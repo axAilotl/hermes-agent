@@ -1025,6 +1025,10 @@ def test_launch_tui_sets_resume_env_from_resume_arg(monkeypatch, main_mod):
 
 
 def test_make_tui_argv_dev_prebuilds_hermes_ink(monkeypatch, main_mod, tmp_path):
+    import hermes_constants
+
+    # This test mocks build subprocesses; patch-level probes are tested separately.
+    monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda *args, **kwargs: True)
     tui_dir = tmp_path / "ui-tui"
     tsx = tui_dir / "node_modules" / ".bin" / "tsx"
     ink_dir = tui_dir / "packages" / "hermes-ink"

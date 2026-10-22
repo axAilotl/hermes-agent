@@ -12,7 +12,7 @@
 #
 # Tool resolution: the hermes wrapper uses --suffix PATH for nix store tools,
 # so apt/uv-installed versions take priority. The container entrypoint provisions
-# extensible tools on first boot: nodejs/npm via apt, uv via curl, and a Python
+# extensible tools: security-checked nodejs/npm via apt, uv via curl, and a Python
 # 3.11 venv (bootstrapped entirely by uv) at ~/.venv with pip seeded. Agents get
 # writable tool prefixes for npm i -g, pip install, uv tool install, etc.
 #
@@ -134,22 +134,40 @@
 
       # ── Provision apt packages (first boot only, cached in writable layer) ──
       # sudo: agent self-modification
-      # nodejs/npm: writable node so npm i -g works (nix store copies are read-only)
-      #   Node 22 via NodeSource — Ubuntu 24.04 ships Node 18 which is EOL.
       # curl: needed for uv installer + NodeSource setup
       if [ ! -f /var/lib/hermes-tools-provisioned ] && command -v apt-get >/dev/null 2>&1; then
         echo "First boot: provisioning agent tools..."
         apt-get update -qq
         apt-get install -y -qq sudo curl ca-certificates gnupg
+      fi
+
+      # The writable layer outlives image updates. Check on every startup so
+      # the first-boot sentinel cannot preserve a pre-fix Node indefinitely.
+      node_runtime_secure() {
+        node -e '
+          const minimum = {22: [23, 4], 24: [22, 1], 26: [12, 1]};
+          const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(process.versions.node);
+          const [major, minor, patch] = match ? match.slice(1).map(Number) : [];
+          const floor = minimum[major];
+          const patched = floor && (minor > floor[0] || (minor === floor[0] && patch >= floor[1]));
+          process.exit(patched && require("node:zlib").constants.BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH === -17 ? 0 : 1);
+        ' >/dev/null 2>&1
+      }
+      if ! node_runtime_secure && command -v apt-get >/dev/null 2>&1; then
+        echo "Refreshing writable Node.js runtime for the Brotli security fix..."
         mkdir -p /etc/apt/keyrings
         curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-          | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+          | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
         echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
           > /etc/apt/sources.list.d/nodesource.list
         apt-get update -qq
         apt-get install -y -qq nodejs
-        touch /var/lib/hermes-tools-provisioned
       fi
+      if ! node_runtime_secure; then
+        echo "Node.js requires the Brotli security fix; refusing to start Hermes." >&2
+        exit 1
+      fi
+      touch /var/lib/hermes-tools-provisioned
 
       if command -v sudo >/dev/null 2>&1 && [ ! -f /etc/sudoers.d/hermes ]; then
         mkdir -p /etc/sudoers.d

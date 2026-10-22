@@ -4,7 +4,7 @@ from unittest.mock import patch
 def test_ensure_dependency_skips_when_present():
     """ensure_dependency is a no-op when the dep is already available."""
     from hermes_cli.dep_ensure import ensure_dependency
-    with patch("hermes_cli.dep_ensure.shutil") as mock_shutil:
+    with patch("hermes_cli.dep_ensure.shutil") as mock_shutil, patch("hermes_cli.dep_ensure.node_tool_runnable", return_value=True):
         mock_shutil.which.return_value = "/usr/bin/node"
         result = ensure_dependency("node", interactive=False)
         assert result is True

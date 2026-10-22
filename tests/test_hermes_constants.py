@@ -134,9 +134,10 @@ class TestHermesManagedNode:
         node_dir.mkdir(parents=True)
         npm_cmd = node_dir / "npm.cmd"
         npm_cmd.write_text("@echo off\n")
+        (node_dir / "node.exe").write_text("portable node")
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setenv("HERMES_HOME", str(home))
-        monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path: True)
+        monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path, **kwargs: True)
 
         assert find_hermes_node_executable("npm") == str(npm_cmd)
 
@@ -149,6 +150,8 @@ class TestHermesManagedNode:
         extensionless.write_text("#!/usr/bin/env node\n")
         powershell.write_text("Write-Output npm\n")
         npm_cmd.write_text("@echo off\n")
+        (bin_dir / "node.exe").write_text("portable node")
+        monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path, **kwargs: True)
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setenv("PATH", str(bin_dir))
 
@@ -163,6 +166,8 @@ class TestHermesManagedNode:
         npm_cmd = bin_dir / "npm.cmd"
         extensionless.write_text("#!/usr/bin/env node\n")
         npm_cmd.write_text("@echo off\n")
+        (bin_dir / "node.exe").write_text("portable node")
+        monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path, **kwargs: True)
         monkeypatch.setattr(hermes_constants.sys, "platform", "win32")
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setenv("PATH", str(bin_dir))
@@ -186,7 +191,7 @@ class TestHermesManagedNode:
         monkeypatch.setattr(
             hermes_constants,
             "node_tool_runnable",
-            lambda path: False,
+            lambda path, **kwargs: False,
         )
 
         assert hermes_managed_node_tree_present() is True
@@ -227,6 +232,71 @@ class TestNodeToolRunnable:
         good = self._stub(tmp_path, "npm", "#!/bin/sh\necho '11.10.0'\nexit 0\n")
         assert node_tool_runnable(str(good)) is True
 
+    @pytest.mark.parametrize("version,accepted", [
+        ("v20.20.2", False), ("v22.23.3", False), ("v22.23.4", True),
+        ("v22.24.0", True), ("v23.11.1", False), ("v24.22.0", False),
+        ("v24.22.1", True), ("v25.9.0", False), ("v26.12.0", False),
+        ("v26.12.1", True), ("v24.22.1-rc.1", False), ("garbage", False),
+    ])
+    def test_node_patch_level_is_checked_by_executing_candidate(self, tmp_path, version, accepted):
+        node = self._stub(tmp_path, "node", f"#!/bin/sh\necho '{version}'\n")
+        assert node_tool_runnable(str(node)) is accepted
+
+    def test_old_managed_node_cannot_make_runnable_npm_acceptable(self, tmp_path, monkeypatch):
+        managed_bin = tmp_path / "node" / "bin"
+        managed_bin.mkdir(parents=True)
+        self._stub(managed_bin, "node", "#!/bin/sh\necho v22.23.3\n")
+        self._stub(managed_bin, "npm", "#!/bin/sh\necho 11.10.0\n")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setattr(hermes_constants, "heal_hermes_managed_node", lambda: False)
+        assert find_node_executable("npm") is None
+
+    @pytest.mark.parametrize("old_in_bin", [True, False])
+    def test_mixed_managed_directories_cannot_run_npm_through_old_node(self, tmp_path, monkeypatch, old_in_bin):
+        root = tmp_path / "node"
+        (root / "bin").mkdir(parents=True)
+        old_dir, fixed_dir = (root / "bin", root) if old_in_bin else (root, root / "bin")
+        self._stub(old_dir, "node", "#!/bin/sh\necho v22.23.3\n")
+        self._stub(fixed_dir, "node", "#!/bin/sh\necho v22.23.4\n")
+        self._stub(fixed_dir, "npm", "#!/bin/sh\necho 11.10.0\n")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setattr(hermes_constants, "heal_hermes_managed_node", lambda: False)
+        assert find_node_executable("node") is None
+        assert find_node_executable("npm") is None
+
+    def test_explicit_node_alias_is_validated_as_node(self, tmp_path):
+        alias = self._stub(tmp_path, "custom-runtime", "#!/bin/sh\necho v24.22.0\n")
+        assert node_tool_runnable(str(alias), is_node=True) is False
+        alias.write_text("#!/bin/sh\necho v24.22.1\n")
+        assert node_tool_runnable(str(alias), is_node=True) is True
+
+    def test_old_path_node_cannot_make_runnable_npm_acceptable(self, tmp_path, monkeypatch):
+        self._stub(tmp_path, "node", "#!/bin/sh\necho v24.22.0\n")
+        self._stub(tmp_path, "npm", "#!/bin/sh\necho 11.10.0\n")
+        monkeypatch.setenv("PATH", str(tmp_path))
+        assert find_node_executable_on_path("npm") is None
+
+    def test_windows_repair_rejects_old_download_before_replacing_cache(self, tmp_path, monkeypatch):
+        import io
+        import urllib.request
+        import zipfile
+
+        node = tmp_path / "node" / "node.exe"
+        node.parent.mkdir()
+        node.write_text("existing runtime")
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as out:
+            out.writestr("node-v22.23.3-win-x64/node.exe", "v22.23.3")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")
+        monkeypatch.delenv("PROCESSOR_ARCHITEW6432", raising=False)
+        def download(url, **kwargs):
+            return io.BytesIO(archive.getvalue() if url.endswith(".zip") else b"node-v22.23.3-win-x64.zip")
+        monkeypatch.setattr(urllib.request, "urlopen", download)
+        monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path: hermes_constants._node_version_secure(Path(path).read_text()))
+        assert hermes_constants._heal_managed_node_windows() is False
+        assert node.read_text() == "existing runtime"
+
     def test_nonzero_exit_rejected(self, tmp_path):
         bad = self._stub(tmp_path, "npm", "#!/bin/sh\nexit 1\n")
         assert node_tool_runnable(str(bad)) is False
@@ -236,7 +306,7 @@ class TestNodeToolRunnable:
         profile_home = tmp_path / "profiles" / "assistant"
         managed_bin = profile_home / "node" / "bin"
         managed_bin.mkdir(parents=True)
-        self._stub(managed_bin, "node", "#!/bin/sh\necho '22.0.0'\nexit 0\n")
+        self._stub(managed_bin, "node", "#!/bin/sh\necho '22.23.4'\nexit 0\n")
         broken_npm = self._stub(managed_bin, "npm", "#!/bin/sh\nexit 1\n")
         heal_called = {"value": False}
 
@@ -265,6 +335,7 @@ class TestNodeToolRunnable:
         profile_home = tmp_path / "profiles" / "assistant"
         managed_bin = profile_home / "node" / "bin"
         managed_bin.mkdir(parents=True)
+        self._stub(managed_bin, "node", "#!/bin/sh\necho v22.23.4\n")
         broken_npm = self._stub(managed_bin, "npm", "#!/bin/sh\nexit 1\n")
         healed_npm = self._stub(managed_bin, "npm", "#!/bin/sh\necho '22.0.0'\nexit 0\n")
 
@@ -308,6 +379,7 @@ class TestNodeToolRunnable:
         profile_home = tmp_path / "profiles" / "assistant"
         managed_bin = profile_home / "node" / "bin"
         managed_bin.mkdir(parents=True)
+        self._stub(managed_bin, "node", "#!/bin/sh\necho v22.23.4\n")
         managed_npm = self._stub(managed_bin, "npm", "#!/bin/sh\necho '22.0.0'\nexit 0\n")
 
         system_bin = tmp_path / "system-bin"
@@ -644,12 +716,12 @@ class TestAgentBrowserRunnable:
 
 
     def test_node_tool_probe_uses_windows_hide_flags(self, tmp_path, monkeypatch):
-        good = self._stub(tmp_path, "node", "#!/bin/sh\necho v22\n")
+        good = self._stub(tmp_path, "node", "#!/bin/sh\necho v22.23.4\n")
         captured = []
 
         def fake_run(cmd, **kwargs):
             captured.append((cmd, kwargs))
-            return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=0, stdout=b"v22.23.4\n")
 
         import hermes_cli._subprocess_compat as subprocess_compat
         import subprocess as subprocess_mod

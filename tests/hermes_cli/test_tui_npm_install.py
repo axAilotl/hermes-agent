@@ -8,9 +8,13 @@ import pytest
 
 
 @pytest.fixture
-def main_mod():
+def main_mod(monkeypatch):
     import hermes_cli.main as m
+    import hermes_constants
 
+    # These tests fake subprocess.run for npm/build behavior. Runtime validation
+    # has its own real-binary regressions below and in test_hermes_constants.py.
+    monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda *args, **kwargs: True)
     return m
 
 
@@ -570,3 +574,24 @@ def test_make_tui_argv_omits_workspace_when_tui_has_own_lockfile(
     assert install_cmd[:2] == ["/bin/npm", "install"]
     # cwd must be tui_dir (standalone), not parent
     assert calls[0][1]["cwd"] == str(tui_dir)
+
+
+@pytest.mark.parametrize("version,accepted", [("v22.23.3", False), ("v22.23.4", True)])
+def test_tui_override_checks_patch_even_for_custom_binary_name(tmp_path, monkeypatch, version, accepted):
+    import hermes_cli.main as main
+
+    alias = tmp_path / "custom-node-runtime"
+    alias.write_text(f"#!/bin/sh\necho {version}\n")
+    alias.chmod(0o755)
+    bundle = tmp_path / "bundle"
+    (bundle / "dist").mkdir(parents=True)
+    (bundle / "dist" / "entry.js").write_text("// prebuilt")
+    monkeypatch.setenv("HERMES_NODE", str(alias))
+    monkeypatch.setenv("HERMES_TUI_DIR", str(bundle))
+    monkeypatch.setattr(main, "_ensure_tui_node", lambda: None)
+    if accepted:
+        argv, _ = main._make_tui_argv(bundle, tui_dev=False)
+        assert argv[0] == str(alias)
+    else:
+        with pytest.raises(SystemExit):
+            main._make_tui_argv(bundle, tui_dev=False)
