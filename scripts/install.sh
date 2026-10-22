@@ -778,21 +778,21 @@ check_git() {
     exit 1
 }
 
-# The desktop build runs Vite ^8, which refuses to start on Node outside
-# `^20.19 || >=22.12` — older Node lacks `node:util.styleText`, so `vite build`
-# crashes with a SyntaxError that surfaces only as the opaque "Build desktop
-# app … exit code 1" install failure. Returns 0 when the given `node --version`
-# string clears that floor; anything below it is replaced with the Hermes-
-# managed Node $NODE_VERSION LTS.
+# Accept supported releases containing the Brotli security fix before using an
+# existing runtime for desktop builds, browser tools or package installation.
 node_satisfies_build() {
     local ver="${1#v}"
-    local major="${ver%%.*}"
-    local minor="${ver#*.}"; minor="${minor%%.*}"
-    case "$major" in ''|*[!0-9]*) return 1 ;; esac
-    case "$minor" in ''|*[!0-9]*) minor=0 ;; esac
-    if [ "$major" -eq 20 ] && [ "$minor" -ge 19 ]; then return 0; fi
-    if [ "$major" -ge 22 ] && { [ "$major" -gt 22 ] || [ "$minor" -ge 12 ]; }; then return 0; fi
-    return 1
+    [[ "$ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+    local major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+    local min_minor min_patch
+    # First fixed releases for CVE-2026-111497; unsupported/odd lines are refused.
+    case "$major" in
+        22) min_minor=23; min_patch=4 ;;
+        24) min_minor=22; min_patch=1 ;;
+        26) min_minor=12; min_patch=1 ;;
+        *) return 1 ;;
+    esac
+    [ "$minor" -gt "$min_minor" ] || { [ "$minor" -eq "$min_minor" ] && [ "$patch" -ge "$min_patch" ]; }
 }
 
 check_node() {
@@ -818,7 +818,7 @@ check_node() {
     fi
 
     if command -v node &> /dev/null; then
-        log_warn "Node.js $(node --version) is too old for the desktop build (need ^20.19 or >=22.12) — installing Hermes-managed Node $NODE_VERSION LTS..."
+        log_warn "Node.js $(node --version) is unsupported or missing the Brotli security fix (need 22.23.4, 24.22.1 or 26.12.1+) — installing Hermes-managed Node $NODE_VERSION LTS..."
     elif [ "$DISTRO" = "termux" ]; then
         log_info "Node.js not found — installing Node.js via pkg..."
     else
@@ -830,7 +830,7 @@ check_node() {
 install_node() {
     if [ "$DISTRO" = "termux" ]; then
         log_info "Installing Node.js via pkg..."
-        if pkg install -y nodejs >/dev/null; then
+        if pkg install -y nodejs >/dev/null && node_satisfies_build "$(node --version 2>/dev/null)"; then
             local installed_ver
             installed_ver=$(node --version 2>/dev/null)
             log_success "Node.js $installed_ver installed via pkg"
@@ -938,6 +938,7 @@ install_node() {
 
     local installed_ver
     installed_ver=$("$HERMES_HOME/node/bin/node" --version 2>/dev/null)
+    node_satisfies_build "$installed_ver" || { log_warn "Downloaded Node does not meet the security floor"; HAS_NODE=false; return 1; }
     log_success "Node.js $installed_ver installed to ~/.hermes/node/"
     HAS_NODE=true
 }
@@ -2749,7 +2750,7 @@ install_desktop() {
     # with no app and a confusing "couldn't find a built desktop" at launch.
     # Always re-resolve Node here. Stages run in separate processes, so we can't
     # trust an earlier check; more importantly check_node now enforces the build
-    # floor (^20.19 || >=22.12) and prepends the Hermes-managed Node to PATH, so
+    # supported security floor and prepends the Hermes-managed Node to PATH, so
     # the build never runs on a too-old system Node — the cause of the opaque
     # "Build desktop app … exit code 1" failure (Vite crashes on old Node).
     check_node

@@ -56,3 +56,22 @@ def test_node_bootstrap_redirects_bundled_npm_global_prefix_to_link_dir() -> Non
     assert "heal_managed_node()" in text
     assert "_nb_managed_tool_broken" in text
     assert "for tool in node npm npx" in text
+
+
+def test_node_installers_require_supported_brotli_security_patches() -> None:
+    """Old patch and prerelease binaries must not bypass installation checks."""
+    import subprocess
+
+    install = INSTALL_SH.read_text()
+    predicate = "node_satisfies_build() {" + install.split("node_satisfies_build() {", 1)[1].split("\n}", 1)[0] + "\n}"
+    versions = {
+        "v20.20.2": False, "v22.23.3": False, "v22.23.4": True,
+        "v22.24.0": True, "v23.11.1": False, "v24.22.0": False,
+        "v24.22.1": True, "v25.9.0": False, "v26.12.0": False,
+        "v26.12.1": True, "v24.22.1-rc.1": False, "garbage": False,
+    }
+    for version, accepted in versions.items():
+        for source, function in [(predicate, "node_satisfies_build"),
+                                  ('source "' + str(NODE_BOOTSTRAP) + '"', "_nb_node_version_secure")]:
+            result = subprocess.run(["bash", "-c", source + '\n' + function + ' "$1"', "test", version], check=False)
+            assert (result.returncode == 0) is accepted, (function, version)
