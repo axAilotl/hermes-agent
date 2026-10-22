@@ -188,6 +188,7 @@ class TestStaleBridgeHandshake:
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process") as mock_kill_port, \
+             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             result = await adapter.connect()
@@ -216,6 +217,7 @@ class TestStaleBridgeHandshake:
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()
@@ -241,12 +243,14 @@ class TestDepRefreshStamp:
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
-             patch("subprocess.run") as mock_run, \
+             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")) as mock_run, \
              patch("subprocess.Popen", return_value=mock_proc), \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()
 
-        mock_run.assert_not_called()
+        # Secure Node resolution probes --version even when npm deps are fresh.
+        assert mock_run.call_args_list
+        assert all(call.args[0][1:] == ["--version"] for call in mock_run.call_args_list)
 
     @pytest.mark.asyncio
     async def test_reinstalls_when_package_json_changed(self, tmp_path):
@@ -267,13 +271,13 @@ class TestDepRefreshStamp:
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
-             patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run, \
+             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")) as mock_run, \
              patch("subprocess.Popen", return_value=mock_proc), \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()
 
-        mock_run.assert_called_once()
-        assert "install" in mock_run.call_args[0][0]
+        install_calls = [call for call in mock_run.call_args_list if "install" in call.args[0]]
+        assert len(install_calls) == 1
         # Stamp updated to the new package.json hash
         from plugins.platforms.whatsapp.adapter import _file_content_hash
         stamp = (bridge_dir / "node_modules" / ".hermes-pkg-hash").read_text().strip()
@@ -291,6 +295,8 @@ class TestDepRefreshStamp:
         mock_proc.returncode = 1
 
         def _npm_install(*args, **kwargs):
+            if args[0][1:] == ["--version"]:
+                return MagicMock(returncode=0, stdout=b"v24.22.1\n")
             # npm creates node_modules as a side effect
             (bridge_dir / "node_modules").mkdir(exist_ok=True)
             return MagicMock(returncode=0)
@@ -305,7 +311,8 @@ class TestDepRefreshStamp:
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()
 
-        mock_run.assert_called_once()
+        install_calls = [call for call in mock_run.call_args_list if "install" in call.args[0]]
+        assert len(install_calls) == 1
 
 
 class TestCacheDirEnvPassthrough:
@@ -326,6 +333,7 @@ class TestCacheDirEnvPassthrough:
              patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock), \
              patch("plugins.platforms.whatsapp.adapter._kill_stale_bridge_by_pidfile"), \
              patch("plugins.platforms.whatsapp.adapter._kill_port_process"), \
+             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch.object(adapter, "_acquire_platform_lock", return_value=True, create=True):
             await adapter.connect()

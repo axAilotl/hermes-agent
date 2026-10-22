@@ -93,7 +93,7 @@ def _connect_patches(mock_proc, mock_fh, mock_client_cls=None):
         patch("plugins.platforms.whatsapp.adapter.check_whatsapp_requirements", return_value=True),
         patch.object(Path, "exists", return_value=True),
         patch.object(Path, "mkdir", return_value=None),
-        patch("subprocess.run", return_value=MagicMock(returncode=0)),
+        patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")),
         patch("subprocess.Popen", return_value=mock_proc),
         patch("builtins.open", return_value=mock_fh),
         patch("plugins.platforms.whatsapp.adapter.asyncio.sleep", new_callable=AsyncMock),
@@ -224,9 +224,14 @@ class TestConnectCleanup:
 
         install_result = MagicMock(returncode=1, stderr="install failed")
 
+        def _run(cmd, **kwargs):
+            if cmd[1:] == ["--version"]:
+                return MagicMock(returncode=0, stdout=b"v24.22.1\n")
+            return install_result
+
         with patch("plugins.platforms.whatsapp.adapter.check_whatsapp_requirements", return_value=True), \
              patch.object(Path, "exists", autospec=True, side_effect=_path_exists), \
-             patch("subprocess.run", return_value=install_result), \
+             patch("subprocess.run", side_effect=_run), \
              patch("gateway.status.acquire_scoped_lock", return_value=(True, None)), \
              patch("gateway.status.release_scoped_lock") as mock_release:
             result = await adapter.connect()
@@ -451,7 +456,7 @@ class TestBridgeRuntimeFailure:
         with patch("plugins.platforms.whatsapp.adapter.check_whatsapp_requirements", return_value=True), \
              patch.object(Path, "exists", return_value=True), \
              patch.object(Path, "mkdir", return_value=None), \
-             patch("subprocess.run", return_value=MagicMock(returncode=0)), \
+             patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=b"v24.22.1\n")), \
              patch("subprocess.Popen", side_effect=OSError("spawn failed")), \
              patch("builtins.open", return_value=mock_fh):
             result = await adapter.connect()
