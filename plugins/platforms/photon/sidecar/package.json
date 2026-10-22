@@ -10,7 +10,7 @@
     "postinstall": "node patch-spectrum-mixed-attachments.mjs"
   },
   "engines": {
-    "node": "^22.23.4"
+    "node": "^22.23.4 || ^24.22.1 || ^26.12.1"
   },
   "dependencies": {
     "spectrum-ts": "8.0.0"
