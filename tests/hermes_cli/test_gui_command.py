@@ -13,6 +13,19 @@ import pytest
 from hermes_cli import main as cli_main
 
 
+@pytest.fixture(autouse=True)
+def _healthy_mocked_node_probe(monkeypatch):
+    """Keep build/update subprocess mocks separate from runtime-version probes.
+
+    The real version/cache boundary is exercised in test_hermes_constants.py.
+    """
+    import hermes_constants
+
+    monkeypatch.setattr(
+        hermes_constants, "node_tool_runnable", lambda path, **kwargs: bool(path)
+    )
+
+
 def _ns(**kw):
     defaults = dict(
         skip_build=False,

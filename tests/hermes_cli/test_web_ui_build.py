@@ -11,8 +11,23 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 from hermes_cli.main import _web_ui_build_needed, _build_web_ui, _run_npm_install_deterministic
+
+
+@pytest.fixture(autouse=True)
+def _healthy_mocked_node_probe(monkeypatch):
+    """Keep build/update subprocess mocks separate from runtime-version probes.
+
+    The real version/cache boundary is exercised in test_hermes_constants.py.
+    """
+    import hermes_constants
+
+    monkeypatch.setattr(
+        hermes_constants, "node_tool_runnable", lambda path, **kwargs: bool(path)
+    )
 
 
 def _touch(path: Path, offset: float = 0.0) -> None:

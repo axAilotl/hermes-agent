@@ -101,6 +101,10 @@ def test_update_via_zip_accepts_normal_member(tmp_path, monkeypatch, capsys):
     from hermes_cli import main as hermes_main
 
     monkeypatch.setattr(hermes_main, "PROJECT_ROOT", fake_root)
+    # ZIP extraction mocks all subprocesses; do not send version probes through
+    # its generic empty-stdout mock (the runtime boundary has separate tests).
+    import hermes_constants
+    monkeypatch.setattr(hermes_constants, "node_tool_runnable", lambda path, **kwargs: bool(path))
 
     args = type("Args", (), {})()
 

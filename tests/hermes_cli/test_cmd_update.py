@@ -9,6 +9,19 @@ import pytest
 from hermes_cli.main import cmd_update, PROJECT_ROOT
 
 
+@pytest.fixture(autouse=True)
+def _healthy_mocked_node_probe(monkeypatch):
+    """Keep build/update subprocess mocks separate from runtime-version probes.
+
+    The real version/cache boundary is exercised in test_hermes_constants.py.
+    """
+    import hermes_constants
+
+    monkeypatch.setattr(
+        hermes_constants, "node_tool_runnable", lambda path, **kwargs: bool(path)
+    )
+
+
 def _make_run_side_effect(branch="main", verify_ok=True, commit_count="0"):
     """Build a side_effect function for subprocess.run that simulates git commands."""
 
@@ -257,7 +270,7 @@ class TestCmdUpdateBranchFallback:
     ):
         from hermes_cli import main as hm
 
-        mock_which.side_effect = {"uv": "/usr/bin/uv", "npm": "/usr/bin/npm"}.get
+        mock_which.side_effect = {"uv": "/usr/bin/uv", "node": "/usr/bin/node", "npm": "/usr/bin/npm"}.get
         mock_run.side_effect = _make_run_side_effect(
             branch="main", verify_ok=True, commit_count="1"
         )
